@@ -1,6 +1,27 @@
 # Setup
 This is a guide for me. I often forget how to do certain things and then I need to look them up on SO again.
 
+## Erasing macOS on Apple Silicon
+First, backup your shit. 
+
+P.S.: Check the home directory for anything not backed up.
+
+Steps:
+1. Sign out of iCloud (`System Preferences->Apple Id->Sign out->Delete everything`)(Don't keep any backups)
+2. Sign out of iMessage (`iMessage->Preferences->@iMessage->Sign Out`)
+3. Shut down.
+4. Keep the power button pressed until the startup options are loading.
+5. Go into Options.
+6. Enter the password for your account.
+7. Go into disk utility.
+8. Erase the highlighted drive (don't do the show all devices thing).
+9. In the options, Click on erase volume group (not erase).
+10. Wait for it to boot up again.
+11. Activate the Mac.
+12. Then exit to recovery utilities.
+13. Click on install MacOS Big Sur (or Monterey).
+14. Wait for it to install.
+
 ## Installing Brew
 `/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"`
 
