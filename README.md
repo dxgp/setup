@@ -51,25 +51,18 @@ set backspace=indent,eol,start
 ### Zsh
 ```bash
 setopt prompt_subst
-
-
 CONDA STUFF HERE
-
 #helper functions
-
 function precmd() {
 	if [[ -n "$CONDA_DEFAULT_ENV" ]]; then
   		env="$CONDA_DEFAULT_ENV"
 	elif [[ -n "$VIRTUAL_ENV" ]]; then
   		env="$VIRTUAL_ENV"
 	fi
-
 }
-
 parse_git_branch() {
   git branch 2> /dev/null | sed -e '/^[^*]/d' -e 's/* \(.*\)/ (\1)/'
 }
-
 
 # set prompt
 PROMPT="%F{153}\${env} %f%B%F{green}%n@%m%b%f %.%F{118}\$(parse_git_branch)%f%% "
@@ -110,4 +103,12 @@ set -g mouse on
 8. The Unarchiver
 9. PDF Expert
 
+## A Few More Things to Do
+1. Setup Google Cloud SDK
+2. Setup GitHub SSH
+3. Change Default Screenshots Folder
+
+
+## Getting Cooler Icons
+To get better icons, go to [macOS Icons](macosicons.com)
 
