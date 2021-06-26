@@ -92,6 +92,28 @@ bind -n M-Down select-pane -D
 set -g mouse on
 ```
 
+##SSH
+To setup SSH, copy the keys from your SSD to the home directory. There are two files, id_rsa and id_rsa.pub.
+
+Add the keys to the ssh-agent using
+```bash
+ssh-add -K ~/.ssh/id_rsa
+```
+
+## If you want to setup SSH from scratch
+```bash 
+ssh-keygen
+```
+```bash
+ssh-add ~/.ssh/id_rsa
+```
+Get your public key using:
+`cat ~/.ssh/id_rsa.pub`
+
+Then go to your GitHub Account and add the public key.
+
+Then test if it's working using: `ssh -T git@github.com`.
+
 ## Some Applications
 1. Magnet
 2. Pages, Keynote
