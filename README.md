@@ -1,4 +1,4 @@
-# setup
+# Setup
 This is a guide for me. I often forget how to do certain things and then I need to look them up on SO again.
 
 ## Installing Brew
@@ -92,7 +92,7 @@ bind -n M-Down select-pane -D
 set -g mouse on
 ```
 
-##SSH
+## SSH
 
 To setup SSH, copy the keys from your SSD to the home directory. There are two files, id_rsa and id_rsa.pub.
 
