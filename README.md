@@ -93,6 +93,7 @@ set -g mouse on
 ```
 
 ##SSH
+
 To setup SSH, copy the keys from your SSD to the home directory. There are two files, id_rsa and id_rsa.pub.
 
 Add the keys to the ssh-agent using
