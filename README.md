@@ -52,6 +52,8 @@ This should give you everything you need.
 
 ## Setting up the config files
 ### Vim
+First, setup vundle using `git clone https://github.com/VundleVim/Vundle.vim.git ~/.vim/bundle/Vundle.vim`
+
 ```bash
 set nocompatible
 filetype off
