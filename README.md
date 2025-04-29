@@ -301,3 +301,429 @@ Then just go to your home folder and run it. It'll pop in in your terminal prefe
 ## Getting Cooler Icons
 To get better icons, go to [macOS Icons](macosicons.com)
 
+'''python
+#!/usr/bin/env python3
+# C Function Dependency Extractor - Multi-file Version
+# Requires: pip install clang
+
+import sys
+import os
+import glob
+import re
+from clang.cindex import Index, CursorKind, TranslationUnit, Config
+
+class FunctionExtractor:
+    def __init__(self, compilation_db_path=None):
+        """Initialize the extractor with optional compilation database."""
+        self.index = Index.create()
+        self.compilation_db = None
+        self.target_cursor = None
+        self.dependencies = set()
+        self.struct_decls = {}
+        self.enum_decls = {}
+        self.typedef_decls = {}
+        self.function_decls = {}
+        self.function_defs = {}
+        self.header_files = set()
+        self.visited_functions = set()
+        
+        # Try to find libclang path if not in standard location
+        if not hasattr(Config, 'loaded'):
+            try:
+                # Common locations
+                potential_paths = [
+                    '/usr/lib/llvm-*/lib/libclang.so',  # Debian/Ubuntu
+                    '/usr/local/opt/llvm/lib/libclang.dylib',  # macOS Homebrew
+                    'C:/Program Files/LLVM/bin/libclang.dll',  # Windows
+                ]
+                
+                for path_pattern in potential_paths:
+                    paths = glob.glob(path_pattern)
+                    if paths:
+                        Config.set_library_file(paths[0])
+                        break
+            except:
+                print("Warning: Could not locate libclang. If you encounter errors, set the LIBCLANG_PATH environment variable.")
+        
+        # Use compilation database if provided
+        if compilation_db_path and os.path.exists(compilation_db_path):
+            self.compilation_db = CompilationDatabase.fromDirectory(compilation_db_path)
+    
+    def find_includes_in_file(self, file_path):
+        """Extract #include statements from a file."""
+        includes = []
+        try:
+            with open(file_path, 'r') as f:
+                for line in f:
+                    match = re.match(r'#include\s+["<](.*)[">]', line.strip())
+                    if match:
+                        includes.append(match.group(1))
+        except Exception as e:
+            print(f"Warning: Could not read includes from {file_path}: {e}")
+        return includes
+    
+    def parse_file(self, file_path, extra_args=None):
+        """Parse a source file with clang."""
+        if not extra_args:
+            extra_args = ['-xc', '-std=c99']
+            
+        # Add include paths if they're not in the arguments
+        has_include_path = any(arg.startswith('-I') for arg in extra_args)
+        if not has_include_path:
+            # Try to add common include paths
+            file_dir = os.path.dirname(os.path.abspath(file_path))
+            extra_args.extend([
+                f'-I{file_dir}',
+                f'-I{os.path.join(file_dir, "include")}',
+                '-I/usr/include',
+                '-I/usr/local/include'
+            ])
+        
+        try:
+            tu = self.index.parse(file_path, args=extra_args)
+            if tu is None:
+                print(f"Error: Could not parse {file_path}")
+                return None
+                
+            # Check for parsing errors
+            for diag in tu.diagnostics:
+                if diag.severity >= 3:  # Error or fatal
+                    print(f"Warning: {diag.spelling} in {file_path}:{diag.location.line}")
+                    
+            return tu
+        except Exception as e:
+            print(f"Error parsing {file_path}: {e}")
+            return None
+    
+    def find_function_in_tu(self, tu, target_function):
+        """Find a function declaration/definition in a translation unit."""
+        def visit_node(cursor):
+            if cursor.kind == CursorKind.FUNCTION_DECL and cursor.spelling == target_function:
+                if cursor.is_definition():
+                    self.target_cursor = cursor
+                    return True
+                elif not self.target_cursor:  # Keep declaration as backup
+                    self.target_cursor = cursor
+            
+            for child in cursor.get_children():
+                if visit_node(child):
+                    return True
+            return False
+        
+        if tu:
+            visit_node(tu.cursor)
+        
+        return self.target_cursor is not None
+    
+    def find_function_in_files(self, files, target_function):
+        """Look for the target function across multiple files."""
+        for file_path in files:
+            if not os.path.exists(file_path):
+                print(f"Warning: File {file_path} does not exist, skipping")
+                continue
+                
+            if not file_path.endswith(('.c', '.h', '.cpp', '.hpp')):
+                continue
+                
+            print(f"Searching for {target_function} in {file_path}")
+            tu = self.parse_file(file_path)
+            if tu and self.find_function_in_tu(tu, target_function):
+                print(f"Found {target_function} in {file_path}")
+                # If we found a definition, we're done
+                if self.target_cursor.is_definition():
+                    return file_path
+        
+        # If we only found a declaration, still return the file
+        if self.target_cursor:
+            return self.target_cursor.location.file.name
+            
+        return None
+    
+    def extract_code_range(self, file_path, start_line, end_line):
+        """Extract a range of lines from a file."""
+        try:
+            with open(file_path, 'r') as f:
+                lines = f.readlines()
+                # Lines are 1-indexed in Clang
+                return ''.join(lines[start_line-1:end_line])
+        except Exception as e:
+            print(f"Error extracting code: {e}")
+            return ""
+    
+    def collect_dependencies(self, start_cursor):
+        """Recursively collect all dependencies of a function."""
+        self.visited_functions.add(start_cursor.spelling)
+        
+        # Queue of functions to process
+        queue = [start_cursor]
+        processed = set()
+        
+        while queue:
+            cursor = queue.pop(0)
+            if cursor.hash in processed:
+                continue
+                
+            processed.add(cursor.hash)
+            file_name = cursor.location.file.name if cursor.location.file else None
+            
+            def visit_node(node):
+                # Track referenced functions
+                if node.kind == CursorKind.CALL_EXPR:
+                    called = node.referenced
+                    if called and called.spelling and called.kind == CursorKind.FUNCTION_DECL:
+                        self.dependencies.add(called.spelling)
+                        if called.spelling not in self.visited_functions and called.spelling != cursor.spelling:
+                            if called.is_definition():
+                                queue.append(called)
+                                self.visited_functions.add(called.spelling)
+                                
+                                # Store function definition
+                                if called.location.file:
+                                    if called.spelling not in self.function_defs:
+                                        start = called.extent.start.line
+                                        end = called.extent.end.line
+                                        code = self.extract_code_range(called.location.file.name, start, end)
+                                        self.function_defs[called.spelling] = code
+                            else:
+                                # Store function declaration
+                                if called.location.file:
+                                    if called.spelling not in self.function_decls:
+                                        start = called.extent.start.line
+                                        end = called.extent.end.line
+                                        code = self.extract_code_range(called.location.file.name, start, end)
+                                        self.function_decls[called.spelling] = code
+                
+                # Track struct/union references
+                elif node.kind in (CursorKind.STRUCT_DECL, CursorKind.UNION_DECL) and node.spelling:
+                    key = f"{node.kind}_{node.spelling}"
+                    if key not in self.struct_decls and node.location.file:
+                        start = node.extent.start.line
+                        end = node.extent.end.line
+                        code = self.extract_code_range(node.location.file.name, start, end)
+                        self.struct_decls[key] = code
+                        
+                        # Also collect nested typedefs, structs, etc.
+                        for child in node.get_children():
+                            visit_node(child)
+                
+                # Track enum references
+                elif node.kind == CursorKind.ENUM_DECL and node.spelling:
+                    key = f"ENUM_{node.spelling}"
+                    if key not in self.enum_decls and node.location.file:
+                        start = node.extent.start.line
+                        end = node.extent.end.line
+                        code = self.extract_code_range(node.location.file.name, start, end)
+                        self.enum_decls[key] = code
+                
+                # Track typedef references
+                elif node.kind == CursorKind.TYPEDEF_DECL:
+                    key = f"TYPEDEF_{node.spelling}"
+                    if key not in self.typedef_decls and node.location.file:
+                        start = node.extent.start.line
+                        end = node.extent.end.line
+                        code = self.extract_code_range(node.location.file.name, start, end)
+                        self.typedef_decls[key] = code
+                        
+                        # Also collect underlying type info
+                        for child in node.get_children():
+                            visit_node(child)
+                
+                # Track included headers
+                elif node.kind == CursorKind.INCLUSION_DIRECTIVE:
+                    if node.location.file and node.location.file.name == file_name:
+                        included_file = node.included_file
+                        if included_file:
+                            self.header_files.add(included_file.name)
+                
+                # Process all children
+                for child in node.get_children():
+                    visit_node(child)
+            
+            # Start recursive collection
+            visit_node(cursor)
+    
+    def generate_minimal_file(self, target_function):
+        """Generate a minimal file with all dependencies for the target function."""
+        if not self.target_cursor:
+            print(f"Error: Function {target_function} not found.")
+            return None
+        
+        # Collect all dependencies
+        self.collect_dependencies(self.target_cursor)
+        
+        # Start building output
+        output = []
+        
+        # Add standard headers
+        output.append("/* Generated minimal test case for function: {} */".format(target_function))
+        output.append("#include <stdio.h>")
+        output.append("#include <stdlib.h>")
+        output.append("#include <time.h>")
+        output.append("")
+        
+        # Add project headers (simplified, may need manual editing)
+        if self.header_files:
+            output.append("/* Required headers - you may need to adjust paths */")
+            for header in sorted(self.header_files):
+                # Extract just the filename without path
+                header_name = os.path.basename(header)
+                if header_name.endswith('.h'):
+                    output.append(f"#include \"{header_name}\"")
+            output.append("")
+        
+        # Add typedefs
+        if self.typedef_decls:
+            output.append("/* Required typedefs */")
+            for typedef_code in self.typedef_decls.values():
+                if typedef_code and len(typedef_code.strip()) > 0:
+                    output.append(typedef_code)
+            output.append("")
+        
+        # Add struct/union definitions
+        if self.struct_decls:
+            output.append("/* Required struct/union definitions */")
+            for struct_code in self.struct_decls.values():
+                if struct_code and len(struct_code.strip()) > 0:
+                    output.append(struct_code)
+            output.append("")
+        
+        # Add enum definitions
+        if self.enum_decls:
+            output.append("/* Required enum definitions */")
+            for enum_code in self.enum_decls.values():
+                if enum_code and len(enum_code.strip()) > 0:
+                    output.append(enum_code)
+            output.append("")
+        
+        # Add function declarations for dependencies
+        if self.function_decls:
+            output.append("/* Function declarations */")
+            for func_name, decl in self.function_decls.items():
+                if func_name in self.function_defs:
+                    # Skip declarations for functions we have definitions for
+                    continue
+                if decl and len(decl.strip()) > 0:
+                    output.append(decl)
+            output.append("")
+        
+        # Add function definitions (excluding the target)
+        if self.function_defs:
+            output.append("/* Required function implementations */")
+            for func_name, def_code in self.function_defs.items():
+                if func_name != target_function and def_code and len(def_code.strip()) > 0:
+                    output.append(def_code)
+                    output.append("")
+        
+        # Add the target function implementation
+        output.append("/* Target function */")
+        if self.target_cursor.is_definition():
+            start = self.target_cursor.extent.start.line
+            end = self.target_cursor.extent.end.line
+            target_code = self.extract_code_range(self.target_cursor.location.file.name, start, end)
+            output.append(target_code)
+        else:
+            # If we only have a declaration, add a stub implementation
+            output.append(f"/* WARNING: Only found declaration for {target_function}, implementation needs to be added */")
+            if target_function in self.function_decls:
+                output.append(self.function_decls[target_function])
+                output.append("{")
+                output.append("    /* TODO: Add implementation */")
+                output.append("}")
+        output.append("")
+        
+        # Add a test harness
+        output.append("/* Test harness */")
+        output.append("int main() {")
+        output.append("    /* TODO: Initialize any required data structures */")
+        output.append("    ")
+        output.append("    /* Performance measurement */")
+        output.append("    clock_t start = clock();")
+        output.append("    ")
+        output.append("    /* Run the function many times for benchmarking */")
+        output.append("    for (int i = 0; i < 1000000; i++) {")
+        output.append(f"        {target_function}(/* TODO: Add appropriate parameters */);")
+        output.append("    }")
+        output.append("    ")
+        output.append("    clock_t end = clock();")
+        output.append("    double time_spent = (double)(end - start) / CLOCKS_PER_SEC;")
+        output.append("    printf(\"Time spent: %f seconds\\n\", time_spent);")
+        output.append("    ")
+        output.append("    return 0;")
+        output.append("}")
+        
+        return '\n'.join(output)
+
+def find_c_files(directory, recursive=True):
+    """Find all C source files in a directory."""
+    c_files = []
+    
+    if recursive:
+        for root, _, files in os.walk(directory):
+            for file in files:
+                if file.endswith(('.c', '.h', '.cpp', '.hpp')):
+                    c_files.append(os.path.join(root, file))
+    else:
+        for file in os.listdir(directory):
+            if file.endswith(('.c', '.h', '.cpp', '.hpp')):
+                c_files.append(os.path.join(directory, file))
+    
+    return c_files
+
+def main():
+    if len(sys.argv) < 3:
+        print("Usage: python extract_function.py [source_directory|source_file] function_name [--output output_file]")
+        print("Options:")
+        print("  --output output_file    Specify output file (default: function_name_minimal.c)")
+        print("  --no-recursive          Don't search subdirectories")
+        return 1
+    
+    path = sys.argv[1]
+    target_function = sys.argv[2]
+    
+    # Parse options
+    output_file = f"{target_function}_minimal.c"
+    recursive = True
+    
+    if "--output" in sys.argv:
+        idx = sys.argv.index("--output")
+        if idx + 1 < len(sys.argv):
+            output_file = sys.argv[idx + 1]
+    
+    if "--no-recursive" in sys.argv:
+        recursive = False
+    
+    # Initialize extractor
+    extractor = FunctionExtractor()
+    
+    # Find source files
+    if os.path.isdir(path):
+        files = find_c_files(path, recursive)
+        print(f"Found {len(files)} source files in {path}")
+    else:
+        files = [path]
+    
+    # Find the target function
+    source_file = extractor.find_function_in_files(files, target_function)
+    
+    if not source_file:
+        print(f"Error: Could not find function '{target_function}' in any source file.")
+        return 1
+    
+    # Generate minimal file
+    print(f"Generating minimal file for function '{target_function}'...")
+    minimal_code = extractor.generate_minimal_file(target_function)
+    
+    if minimal_code:
+        with open(output_file, 'w') as f:
+            f.write(minimal_code)
+        print(f"Successfully extracted minimal version to {output_file}")
+        print("Note: You may need to manually adjust function prototypes and test data.")
+    else:
+        print("Error: Failed to generate minimal file.")
+        return 1
+    
+    return 0
+
+if __name__ == "__main__":
+    sys.exit(main())
+'''
